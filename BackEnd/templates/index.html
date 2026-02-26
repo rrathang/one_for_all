@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API • Agent Tooling Platform</title>
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+
+  <!-- CodeMirror 5 (Python) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+</head>
+
+<body>
+  <!-- ===================== AUTH OVERLAY ===================== -->
+  <div id="authOverlay" class="auth-overlay d-none">
+    <div class="card shadow auth-card">
+      <div class="card-body p-4">
+        <div class="text-center mb-3">
+          <img src="{{ url_for('static', filename='img/nokia-logo.jpg') }}" class="brand-logo" alt="NOKIA">
+        </div>
+
+        <ul class="nav nav-pills nav-justified mb-3" id="authTabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tab-login" data-bs-toggle="pill" data-bs-target="#pane-login"
+              type="button" role="tab">Login</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-register" data-bs-toggle="pill" data-bs-target="#pane-register"
+              type="button" role="tab">Register</button>
+          </li>
+        </ul>
+
+        <div class="tab-content">
+          <!-- LOGIN PANE -->
+          <div class="tab-pane fade show active" id="pane-login" role="tabpanel">
+            <div class="mb-2">
+              <label class="form-label">Email</label>
+              <input id="loginEmail" class="form-control" placeholder="you@company.com" autocomplete="username">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Password</label>
+              <input id="loginPassword" type="password" class="form-control" placeholder="••••••••"
+                autocomplete="current-password">
+            </div>
+            <div class="d-grid gap-2">
+              <button id="btnLogin" class="btn btn-primary"><i class="bi bi-box-arrow-in-right me-1"></i>Sign
+                in</button>
+            </div>
+          </div>
+
+          <!-- REGISTER PANE -->
+          <div class="tab-pane fade" id="pane-register" role="tabpanel">
+            <div class="mb-2">
+              <label class="form-label">Full Name</label>
+              <input id="regName" class="form-control" placeholder="Jane Doe" autocomplete="name">
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Email</label>
+              <input id="regEmail" class="form-control" placeholder="you@company.com" autocomplete="email">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Password</label>
+              <input id="regPassword" type="password" class="form-control" placeholder="••••••••"
+                autocomplete="new-password">
+            </div>
+            <div class="d-grid gap-2">
+              <button id="btnRegister" class="btn btn-primary"><i class="bi bi-person-plus-fill me-1"></i>Create
+                Account</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="app-wrapper">
+    <!-- ===================== SIDEBAR ===================== -->
+    <aside class="sidebar p-3">
+      <div class="mb-3 text-center">
+        <img src="{{ url_for('static', filename='img/nokia-logo.jpg') }}" class="brand-logo mb-2" alt="NOKIA">
+        <div class="text-muted small mt-1 brand-text" style="font-size:0.875rem;">API &middot; Agent &middot; Tooling
+        </div>
+        <div class="text-muted small mt-1">Build, Test, Deploy</div>
+      </div>
+
+      <div class="d-grid gap-2 mb-3">
+        <button id="btnNewFunction" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>New Agent</button>
+      </div>
+
+      <hr />
+
+      <ul class="nav nav-pills flex-column gap-1" id="sideNav">
+        <li class="nav-item"><a class="nav-link d-flex align-items-center active" href="#"
+            data-target="builderSection"><i class="bi bi-pencil-square me-2"></i> Builder</a></li>
+        <li class="nav-item"><a class="nav-link d-flex align-items-center" href="#" data-target="projectsSection"><i
+              class="bi bi-briefcase me-2"></i> Projects & Tokens</a></li>
+        <li class="nav-item"><a class="nav-link d-flex align-items-center" href="#" data-target="functionsSection"><i
+              class="bi bi-collection me-2"></i> Agents</a></li>
+        <li class="nav-item"><a class="nav-link d-flex align-items-center" href="#" data-target="dashboardSection"><i
+              class="bi bi-graph-up me-2"></i> Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link d-flex align-items-center" href="#" data-target="logsSection"><i
+              class="bi bi-clipboard-data me-2"></i> Logs</a></li>
+      </ul>
+
+      <hr />
+
+      <div class="d-flex align-items-center justify-content-between">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="darkToggle" />
+          <label class="form-check-label" for="darkToggle">Dark mode</label>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" id="btnRefreshAll" title="Refresh"><i
+            class="bi bi-arrow-repeat"></i></button>
+      </div>
+
+      <div class="mt-3 small text-muted">
+        <div><span class="badge-dot bg-success"></span>API: http://192.168.29.82:5000/<span id="apiBaseLabel">—</span>
+        </div>
+        <div class="mt-2"><i class="bi bi-person-circle me-1"></i><span id="userLabel">Signed in</span></div>
+      </div>
+    </aside>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="main">
+      <!-- Topbar -->
+      <div class="topbar px-3 py-2 d-flex align-items-center justify-content-between">
+        <ul class="nav nav-underline" id="topTabs">
+          <li class="nav-item"><a class="nav-link active" href="#" data-target="builderSection">Builder</a></li>
+          <li class="nav-item"><a class="nav-link" href="#" data-target="projectsSection">Projects</a></li>
+          <li class="nav-item"><a class="nav-link" href="#" data-target="dashboardSection">Stats</a></li>
+          <li class="nav-item"><a class="nav-link" href="#" data-target="functionsSection">Agents</a></li>
+          <li class="nav-item"><a class="nav-link" href="#" data-target="logsSection">Logs</a></li>
+        </ul>
+
+        <div class="d-flex align-items-center gap-2">
+          <input id="globalSearch" class="form-control form-control-sm" placeholder="Quick search…"
+            style="width: 240px" />
+          <button class="btn btn-sm btn-outline-primary" id="btnQuickRun"><i class="bi bi-play-fill me-1"></i>Quick
+            Run</button>
+          <div class="vr mx-1"></div>
+          <button class="btn btn-sm btn-outline-secondary" id="btnLogout"><i
+              class="bi bi-box-arrow-right me-1"></i>Logout</button>
+        </div>
+      </div>
+
+      <!-- Content area -->
+      <div class="content">
+        <!-- ============== BUILDER SECTION ============== -->
+        <section id="builderSection">
+          <div class="row g-3">
+            <div class="col-lg-8 position-relative">
+              <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-code-slash me-2"></i>Function Editor</span>
+                  <div class="text-muted small">ID: <span id="currentFunctionId">(new)</span> · Owner: <span
+                      id="currentOwnerLabel">you</span></div>
+                </div>
+                <div class="card-body">
+                  <div class="mb-2">
+                    <input id="functionName" class="form-control" placeholder="Function name (optional, for display)" />
+                  </div>
+
+                  <div class="editor-container mb-3">
+                    <div class="editor-header">
+                      <div class="editor-dot dot-red"></div>
+                      <div class="editor-dot dot-yellow"></div>
+                      <div class="editor-dot dot-green"></div>
+                    </div>
+                    <textarea id="codeEditor">def api_def(args):
+    """
+    Example: Add two numbers
+    Required keys: a, b
+    """
+    return args["a"] + args["b"]
+</textarea>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card mt-3">
+                <div class="card-header"><i class="bi bi-terminal me-2"></i>Output</div>
+                <div class="card-body">
+                  <div id="outputBox" class="output-box">Ready.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-lg-4">
+              <div class="card mb-3">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-magic me-2"></i>AI Function Generator</span>
+                  <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse"
+                    data-bs-target="#aiPanel"><i class="bi bi-chevron-expand"></i></button>
+                </div>
+                <div id="aiPanel" class="collapse show">
+                  <div class="card-body">
+                    <textarea id="aiPrompt" class="form-control" rows="3"
+                      placeholder="Describe the function you want (e.g., 'A function that validates Indian PAN numbers')"></textarea>
+                    <div class="d-grid gap-2 mt-3">
+                      <button class="btn btn-primary" id="btnGenerateAI"><i
+                          class="bi bi-stars me-1"></i>Generate</button>
+                    </div>
+                    <div id="aiLoadingUI">
+                      <div class="spinner-grow" role="status"></div>
+                      <span>Drafting code with AI...</span>
+                    </div>
+                    <div class="form-text mt-2">Uses backend OpenAI integration when wired. Public functions remain
+                      view‑only.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card mb-3">
+                <div class="card-header"><i class="bi bi-info-circle me-2"></i>Function Details</div>
+                <div class="card-body">
+                  <div class="mb-2">
+                    <label class="form-label">Description</label>
+                    <input id="functionDesc" class="form-control" placeholder="Short description of your function" />
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Visibility</label>
+                    <select id="functionVisibility" class="form-select">
+                      <option value="private">Private (only me)</option>
+                      <option value="public">Available (view by all)</option>
+                    </select>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Project Association</label>
+                    <select id="functionProject" class="form-select">
+                      <option value="">None (Personal Workspace)</option>
+                      <!-- populated by js -->
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label">Test Parameters (JSON)</label>
+                    <textarea id="testParams" class="form-control" rows="5" placeholder='{"a": 5, "b": 3}'></textarea>
+                  </div>
+                </div>
+              </div>
+
+              <div class="d-grid gap-2" id="actionDraftGroup">
+                <button class="btn btn-primary" id="btnSaveDraft"><i class="bi bi-save me-1"></i>Save Draft</button>
+                <button class="btn btn-success" id="btnDraftTest"><i class="bi bi-play-fill me-1"></i>Test
+                  Draft</button>
+                <button class="btn btn-info text-white fw-bold" id="btnSaveAndTest"><i
+                    class="bi bi-lightning-charge-fill me-1"></i>Save & Test</button>
+                <button class="btn btn-warning" id="btnPromote"><i class="bi bi-rocket-takeoff me-1"></i>Promote to
+                  Prod</button>
+                <button class="btn btn-outline-secondary" id="btnReset"><i
+                    class="bi bi-arrow-counterclockwise me-1"></i>Reset</button>
+              </div>
+
+              <div class="d-grid gap-2 d-none" id="actionEditGroup">
+                <button class="btn btn-primary" id="btnUpdateAgent"><i class="bi bi-save me-1"></i>Update Agent</button>
+                <button class="btn btn-success" id="btnTestAgent"><i class="bi bi-play-fill me-1"></i>Test
+                  Agent</button>
+                <button class="btn btn-info text-white fw-bold" id="btnUpdateAndTest"><i
+                    class="bi bi-lightning-charge-fill me-1"></i>Update & Test</button>
+                <button class="btn btn-outline-secondary" id="btnCancelEdit"><i class="bi bi-x-circle me-1"></i>Cancel
+                  Edit</button>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- ============== FUNCTIONS LIST SECTION ============== -->
+        <section id="functionsSection" class="d-none">
+          <ul class="nav nav-pills mb-3" id="fnTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-mine" data-bs-toggle="pill" data-bs-target="#pane-mine"
+                type="button" role="tab">My Agents</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-available" data-bs-toggle="pill" data-bs-target="#pane-available"
+                type="button" role="tab">Available (View‑only)</button>
+            </li>
+          </ul>
+
+          <div class="tab-content">
+            <div class="tab-pane fade show active" id="pane-mine" role="tabpanel">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <h5 class="mb-0"><i class="bi bi-collection me-2"></i>My Agents</h5>
+                <div class="d-flex gap-2">
+                  <input id="fnSearch" class="form-control form-control-sm" placeholder="Search description…" />
+                  <button class="btn btn-sm btn-outline-secondary" id="btnReloadFunctions"><i
+                      class="bi bi-arrow-clockwise"></i></button>
+                </div>
+              </div>
+              <div class="card">
+                <div class="table-responsive" style="max-height: 52vh;">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th style="width: 80px;">ID</th>
+                        <th>Description</th>
+                        <th style="width: 120px;">Visibility</th>
+                        <th style="width: 160px;">Created</th>
+                        <th style="width: 210px;" class="text-end">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="functionsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="tab-pane fade" id="pane-available" role="tabpanel">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <h5 class="mb-0"><i class="bi bi-people me-2"></i>Available Functions</h5>
+                <div class="d-flex gap-2">
+                  <input id="availSearch" class="form-control form-control-sm" placeholder="Search description…" />
+                  <button class="btn btn-sm btn-outline-secondary" id="btnReloadAvailable"><i
+                      class="bi bi-arrow-clockwise"></i></button>
+                </div>
+              </div>
+              <div class="card">
+                <div class="table-responsive" style="max-height: 52vh;">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th style="width: 80px;">ID</th>
+                        <th>Description</th>
+                        <th style="width: 160px;">Owner</th>
+                        <th style="width: 160px;">Created</th>
+                        <th style="width: 170px;" class="text-end">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="availableTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============== DASHBOARD SECTION ============== -->
+        <section id="dashboardSection" class="d-none">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <div class="card text-center">
+                <div class="card-body">
+                  <div class="text-muted">Total Functions</div>
+                  <div id="statTotalFunctions" class="fs-3 fw-bold">0</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center">
+                <div class="card-body">
+                  <div class="text-muted">Calls (24h)</div>
+                  <div id="statCalls24h" class="fs-3 fw-bold">0</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center">
+                <div class="card-body">
+                  <div class="text-muted">Success Rate</div>
+                  <div id="statSuccessRate" class="fs-3 fw-bold">—</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center">
+                <div class="card-body">
+                  <div class="text-muted">Top Function</div>
+                  <div id="statTopFunction" class="fs-6 fw-semibold">—</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-3 mt-1">
+            <div class="col-lg-7">
+              <div class="card h-100">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-bar-chart-line me-2"></i>Calls by Function</span>
+                  <button class="btn btn-sm btn-outline-secondary" id="btnRefreshCharts"><i
+                      class="bi bi-arrow-repeat"></i></button>
+                </div>
+                <div class="card-body"><canvas id="chartCalls"></canvas></div>
+              </div>
+            </div>
+            <div class="col-lg-5">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-pie-chart me-2"></i>Success vs Errors</div>
+                <div class="card-body"><canvas id="chartSuccess"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============== PROJECTS SECTION ============== -->
+        <section id="projectsSection" class="d-none">
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <h5 class="mb-0"><i class="bi bi-briefcase me-2"></i>My Projects</h5>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-lg-5">
+              <div class="card mb-3">
+                <div class="card-header">Create New Project</div>
+                <div class="card-body">
+                  <div class="input-group">
+                    <input type="text" id="newProjectName" class="form-control"
+                      placeholder="Project Name (e.g., 'Payment Gateway')">
+                    <button class="btn btn-primary" id="btnCreateProject"><i
+                        class="bi bi-plus-lg me-1"></i>Create</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="table-responsive" style="max-height: 52vh;">
+                  <table class="table table-hover align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Project Name</th>
+                        <th class="text-end">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="projectsTableBody">
+                      <tr>
+                        <td colspan="2" class="text-center text-muted">Create a project to generate tokens.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-lg-7">
+              <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-key me-2"></i>API Tokens</span>
+                  <button class="btn btn-sm btn-outline-primary d-none" id="btnGenerateToken"><i
+                      class="bi bi-magic me-1"></i>Generate Token</button>
+                </div>
+                <div class="card-body">
+                  <div id="tokenProjectLabel" class="text-muted small mb-3">Select a project to view its API tokens.
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Token</th>
+                          <th style="width: 150px;">Created</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tokensTableBody">
+                        <tr>
+                          <td colspan="2" class="text-muted">No project selected.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="form-text mt-3">Tokens are securely generated and mapped strictly to a single project
+                    workspace. Send them via <code>Authorization: Bearer sk_...</code> in your external API headers.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============== LOGS SECTION ============== -->
+        <section id="logsSection" class="d-none">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <h5 class="mb-0"><i class="bi bi-clipboard-data me-2"></i>Recent Executions</h5>
+            <button class="btn btn-sm btn-outline-secondary" id="btnReloadLogs"><i
+                class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+          </div>
+          <div class="card">
+            <div class="table-responsive" style="max-height: 65vh;">
+              <table class="table table-hover align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th style="width: 80px;">Log ID</th>
+                    <th>Function / Agent</th>
+                    <th>Project Workspace</th>
+                    <th style="width: 100px;">Outcome</th>
+                    <th style="width: 100px;">Latency</th>
+                    <th style="width: 180px;">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody id="logsTableBody">
+                  <tr>
+                    <td colspan="6" class="text-center text-muted py-4">Loading logs...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ✅ Toast container -->
+  <div id="toastArea" class="position-fixed bottom-0 end-0 p-3" style="z-index: 2000; pointer-events: none;">
+  </div>
+
+  <!-- ===================== API SNIPPET MODAL ===================== -->
+  <div class="modal fade" id="apiSnippetModal" tabindex="-1" aria-labelledby="apiSnippetModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="apiSnippetModalLabel"><i class="bi bi-code-square me-2"></i>API Call Snippet</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Use the following details to execute this agent programmatically.
+            <span id="snippetTokenWarning" class="text-warning d-none"><br><i
+                class="bi bi-exclamation-triangle-fill"></i> No project tokens found! Falling back to your personal
+              session JWT (expires soon).</span>
+          </p>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold small">Endpoint (POST)</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text bg-light text-dark font-monospace">POST</span>
+              <input type="text" class="form-control font-monospace" id="snippetEndpoint" readonly>
+              <button class="btn btn-outline-secondary" onclick="copyToClipboard('snippetEndpoint')"><i
+                  class="bi bi-clipboard"></i></button>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold small">Headers</label>
+            <div class="bg-dark text-light p-2 rounded font-monospace small" style="white-space: pre-wrap;">
+              Content-Type: application/json
+              Authorization: Bearer <span id="snippetToken" class="text-info text-break">loading...</span></div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold small">JSON Body</label>
+            <div class="input-group">
+              <textarea class="form-control font-monospace small bg-dark text-light" id="snippetBody" rows="4"
+                readonly></textarea>
+              <button class="btn btn-outline-secondary" onclick="copyToClipboard('snippetBody')" title="Copy JSON"><i
+                  class="bi bi-clipboard"></i></button>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label fw-bold small">cURL Example</label>
+            <div class="input-group">
+              <textarea class="form-control font-monospace small bg-dark text-light" id="snippetCurl" rows="4"
+                readonly></textarea>
+              <button class="btn btn-outline-secondary" onclick="copyToClipboard('snippetCurl')" title="Copy cURL"><i
+                  class="bi bi-clipboard"></i></button>
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,24 @@
+class API(OFA):
+
+    def __init__(self, args):
+        super().__init__(args)
+        self.packages = ["re"]
+        self.import_packages(self.packages)
+
+    def api_def(self):
+        response = {}
+        try:
+            username = self.get('username', '')
+
+            # Check for special characters in username
+            if re.search(r'[^a-zA-Z0-9]', username):
+                response['result'] = True
+            else:
+                response['result'] = False
+
+            response['status'] = 200
+        except Exception as e:
+            response['status'] = 404
+            response['error'] = str(e)
+            
+        return response
