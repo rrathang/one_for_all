@@ -99,7 +99,9 @@ def token_or_jwt_auth(fn):
     return wrapper
 
 # ==================== SAFE EXEC ====================
-def safe_exec_function(code_str: str, args: dict):
+def safe_exec_function(code_str: str, args: dict, env: dict = None):
+    if env is None: env = {}
+    args["env"] = env
     # Determine the context allowed for the dynamic function
     safe_builtins = {
         "__import__": __import__,  # Required to allow importing modules
@@ -108,7 +110,9 @@ def safe_exec_function(code_str: str, args: dict):
         "map": map, "filter": filter, "list": list, "dict": dict, "set": set, "any": any, "all": all,
         "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError, "AttributeError": AttributeError,
-        "isinstance": isinstance, "str": str, "int": int, "float": float, "bool": bool
+        "isinstance": isinstance, "str": str, "int": int, "float": float, "bool": bool,
+        "getattr": getattr, "hasattr": hasattr, "bytes": bytes, "bytearray": bytearray,
+        "tuple": tuple
     }
     g = {"__builtins__": safe_builtins}
     l = {}
@@ -130,43 +134,53 @@ def ui():
 @app.post("/auth/login")
 def login():
     data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
+    username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    if not email or not password:
-        return jsonify({"error": "Missing email/password"}), 400
+    if not username or not password:
+        return jsonify({"error": "Missing username/password"}), 400
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT id, email, name, password_hash FROM users WHERE email=?", (email,))
+    cur.execute("SELECT id, email, username, name, password_hash, role FROM users WHERE username=?", (username,))
     user = cur.fetchone()
     if not user or not check_password_hash(user["password_hash"], password):
         return jsonify({"error": "Invalid credentials"}), 401
-    token = encode_jwt({"id": user["id"], "email": user["email"], "name": user["name"]})
-    return jsonify({"token": token, "user": {"id": user["id"], "email": user["email"], "name": user["name"]}})
-
-@app.post("/auth/register")
-def register():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    name = (data.get("name") or "User").strip()
-    password = data.get("password") or ""
-    if not email or not password:
-        return jsonify({"error": "Missing email/password"}), 400
-    try:
-        db = get_db()
-        cur = db.cursor()
-        cur.execute("INSERT INTO users (email, name, password_hash) VALUES (?,?,?)",
-                    (email, name, generate_password_hash(password)))
-        db.commit()
-        return jsonify({"ok": True})
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "Email already exists"}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    
+    role = user["role"] or "viewer" # Fallback if null
+    token = encode_jwt({"id": user["id"], "email": user["email"], "username": user["username"], "name": user["name"], "role": role})
+    return jsonify({"token": token, "user": {"id": user["id"], "email": user["email"], "username": user["username"], "name": user["name"], "role": role}})
 
 @app.get("/me")
 @ui_auth_required
 def me():
-    return jsonify({"id": request.user["id"], "email": request.user["email"], "name": request.user["name"]})
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT role FROM users WHERE id=?", (request.user["id"],))
+    row = cur.fetchone()
+    role = row["role"] if row else "viewer"
+    
+    return jsonify({
+        "id": request.user["id"], 
+        "email": request.user["email"], 
+        "name": request.user["name"],
+        "role": role
+    })
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        # We assume ui_auth_required runs before this or we check the token identically
+        if getattr(request, "user", {}).get("role") != "admin":
+            # Extra safety check to db just in case token is stale
+            db = get_db()
+            cur = db.cursor()
+            cur.execute("SELECT role FROM users WHERE id=?", (request.user["id"],))
+            db_row = cur.fetchone()
+            if not db_row or db_row["role"] != "admin":
+                return jsonify({"error": "Admin privileges required"}), 403
+            else:
+                request.user["role"] = "admin" # Update session state
+        return fn(*args, **kwargs)
+    return wrapper
 
 # ==================== NEW: PROJECTS & TOKENS ====================
 @app.get("/projects")
@@ -181,6 +195,9 @@ def list_projects():
 @app.post("/projects")
 @ui_auth_required
 def create_project():
+    if request.user.get("role") == "viewer":
+        return jsonify({"error": "Viewers cannot create projects"}), 403
+
     data = request.get_json() or {}
     name = (data.get("name") or "My Project").strip()
     db = get_db()
@@ -188,6 +205,13 @@ def create_project():
     cur.execute("INSERT INTO projects (user_id, name) VALUES (?,?)", (request.user["id"], name))
     # generate a default token for the project immediately
     proj_id = cur.lastrowid
+    
+    # Auto-assign the creator to this project
+    try:
+        cur.execute("INSERT INTO project_members (project_id, user_id) VALUES (?,?)", (proj_id, request.user["id"]))
+    except:
+        pass
+
     raw_token = "sk_" + secrets.token_hex(20)
     cur.execute("INSERT INTO api_tokens (project_id, token) VALUES (?,?)", (proj_id, raw_token))
     
@@ -211,18 +235,318 @@ def list_tokens(proj_id):
 def create_token(proj_id):
     db=get_db()
     cur=db.cursor()
-    cur.execute("SELECT id FROM projects WHERE id=? AND user_id=?", (proj_id, request.user["id"]))
-    if not cur.fetchone(): return jsonify({"error": "Forbidden"}), 403
+    
+    # Allow admins to bypass
+    is_admin = request.user.get("role") == "admin"
+    
+    # Check if creator or member
+    cur.execute("""
+        SELECT p.id FROM projects p
+        LEFT JOIN project_members pm ON p.id = pm.project_id
+        WHERE p.id=? AND (p.user_id=? OR pm.user_id=?)
+    """, (proj_id, request.user["id"], request.user["id"]))
+    
+    if not is_admin and not cur.fetchone(): 
+        return jsonify({"error": "Forbidden"}), 403
 
     raw_token = "sk_" + secrets.token_hex(20)
     cur.execute("INSERT INTO api_tokens (project_id, token) VALUES (?,?)", (proj_id, raw_token))
     db.commit()
     return jsonify({"id": cur.lastrowid, "token": raw_token})
 
+# ==================== NEW: ADMIN ROUTES ====================
+@app.get("/admin/users")
+@ui_auth_required
+@admin_required
+def admin_get_users():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT id, username, email, name, role, created_at FROM users ORDER BY id DESC")
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+@app.post("/admin/users")
+@ui_auth_required
+@admin_required
+def admin_create_user():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    username = (data.get("username") or "").strip()
+    name = (data.get("name") or "User").strip()
+    password = data.get("password") or ""
+    role = data.get("role") or "viewer"
+
+    if not email or not username or not password:
+        return jsonify({"error": "Missing email, username, or password"}), 400
+
+    try:
+        db = get_db()
+        cur = db.cursor()
+        
+        cur.execute("SELECT id FROM users WHERE email=?", (email,))
+        if cur.fetchone():
+            return jsonify({"error": "User already created for this email"}), 400
+
+        cur.execute("SELECT id FROM users WHERE username=?", (username,))
+        if cur.fetchone():
+            return jsonify({"error": "Username already exists"}), 400
+
+        cur.execute("INSERT INTO users (email, username, name, password_hash, role) VALUES (?,?,?,?,?)",
+                    (email, username, name, generate_password_hash(password), role))
+        db.commit()
+        return jsonify({"ok": True, "id": cur.lastrowid})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.put("/admin/users/<int:u_id>")
+@ui_auth_required
+@admin_required
+def admin_update_user(u_id):
+    data = request.get_json() or {}
+    role = data.get("role")
+    new_name = data.get("name")
+    
+    if role not in ["admin", "developer", "viewer"]:
+        return jsonify({"error": "Invalid role"}), 400
+        
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("UPDATE users SET role = COALESCE(?, role), name = COALESCE(?, name) WHERE id = ?", (role, new_name, u_id))
+    db.commit()
+    return jsonify({"updated": True})
+
+@app.delete("/admin/users/<int:u_id>")
+@ui_auth_required
+@admin_required
+def admin_delete_user(u_id):
+    db = get_db()
+    cur = db.cursor()
+    # Prevent admin from deleting themselves
+    if u_id == request.user["id"]:
+        return jsonify({"error": "You cannot delete your own account"}), 400
+        
+    cur.execute("DELETE FROM users WHERE id = ?", (u_id,))
+    if cur.rowcount == 0:
+        return jsonify({"error": "User not found"}), 404
+        
+    db.commit()
+    return jsonify({"deleted": True})
+
+@app.post("/admin/project_assign")
+@ui_auth_required
+@admin_required
+def admin_assign_project():
+    data = request.get_json() or {}
+    user_id = data.get("user_id")
+    project_id = data.get("project_id")
+    action = data.get("action", "assign") # assign or remove
+    
+    if not user_id or not project_id:
+        return jsonify({"error": "user_id and project_id required"}), 400
+        
+    db = get_db()
+    cur = db.cursor()
+    
+    if action == "assign":
+        try:
+            cur.execute("INSERT INTO project_members (project_id, user_id) VALUES (?, ?)", (project_id, user_id))
+            db.commit()
+            return jsonify({"assigned": True})
+        except sqlite3.IntegrityError:
+            return jsonify({"error": "User already assigned"}), 400
+    else:
+        cur.execute("DELETE FROM project_members WHERE project_id = ? AND user_id = ?", (project_id, user_id))
+        db.commit()
+        return jsonify({"removed": True})
+
+@app.get("/admin/projects")
+@ui_auth_required
+@admin_required
+def admin_get_projects():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT p.id, p.name, u.email as owner FROM projects p JOIN users u ON u.id = p.user_id ORDER BY p.id DESC")
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+# ==================== NEW: ENV VARS ====================
+@app.get("/env_vars")
+@ui_auth_required
+def list_env_vars():
+    proj_id = request.args.get("project_id")
+    db=get_db()
+    cur=db.cursor()
+    if proj_id:
+        cur.execute("SELECT id, name, value, project_id, created_at FROM env_vars WHERE user_id=? AND project_id=? ORDER BY id DESC", (request.user["id"], proj_id))
+    else:
+        cur.execute("SELECT id, name, value, project_id, created_at FROM env_vars WHERE user_id=? ORDER BY id DESC", (request.user["id"],))
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+@app.post("/env_vars")
+@ui_auth_required
+def create_env_var():
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    value = (data.get("value") or "").strip()
+    proj_id = data.get("project_id")
+    if proj_id == "": proj_id = None
+    
+    if not name or not value:
+        return jsonify({"error": "Name and value required"}), 400
+        
+    db=get_db()
+    cur=db.cursor()
+    try:
+        cur.execute("INSERT INTO env_vars (user_id, project_id, name, value) VALUES (?,?,?,?)", (request.user["id"], proj_id, name, value))
+        db.commit()
+        return jsonify({"id": cur.lastrowid, "name": name, "value": value, "project_id": proj_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.put("/env_vars/<int:var_id>")
+@ui_auth_required
+def update_env_var(var_id):
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    value = (data.get("value") or "").strip()
+    proj_id = data.get("project_id")
+    if proj_id == "" or proj_id == "null": proj_id = None
+    
+    if not name or not value:
+        return jsonify({"error": "Name and value required"}), 400
+        
+    db=get_db()
+    cur=db.cursor()
+    
+    cur.execute("SELECT user_id FROM env_vars WHERE id=?", (var_id,))
+    row = cur.fetchone()
+    if not row: return jsonify({"error": "Not found"}), 404
+    if row["user_id"] != request.user["id"]: return jsonify({"error": "Forbidden"}), 403
+    
+    if proj_id:
+        cur.execute("SELECT id FROM projects WHERE id=? AND user_id=?", (proj_id, request.user["id"]))
+        if not cur.fetchone(): return jsonify({"error": "Invalid project"}), 400
+        
+    try:
+        cur.execute("UPDATE env_vars SET project_id=?, name=?, value=? WHERE id=?", 
+                    (proj_id, name, value, var_id))
+        db.commit()
+        return jsonify({"updated": True, "id": var_id, "name": name, "value": value, "project_id": proj_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.delete("/env_vars/<int:var_id>")
+@ui_auth_required
+def delete_env_var(var_id):
+    db=get_db()
+    cur=db.cursor()
+    cur.execute("SELECT user_id FROM env_vars WHERE id=?", (var_id,))
+    row = cur.fetchone()
+    if not row: return jsonify({"error": "Not found"}), 404
+    if row["user_id"] != request.user["id"]: return jsonify({"error": "Forbidden"}), 403
+    
+    cur.execute("DELETE FROM env_vars WHERE id=?", (var_id,))
+    db.commit()
+    return jsonify({"deleted": True})
+
+# ==================== NEW: FUNCTION TEMPLATES ====================
+@app.get("/templates")
+@ui_auth_required
+def list_templates():
+    db=get_db()
+    cur=db.cursor()
+    # ALL users can view all templates (Making templates fully public across the system)
+    cur.execute("""
+        SELECT t.id, t.title, t.description, t.code, t.created_at, t.owner_id, u.email as owner_email
+        FROM function_templates t
+        JOIN users u ON u.id = t.owner_id
+        ORDER BY t.id DESC
+    """)
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+@app.post("/templates")
+@ui_auth_required
+def create_template():
+    data = request.get_json() or {}
+    title = (data.get("title") or "New Template").strip()
+    desc = (data.get("description") or "").strip()
+    code = (data.get("code") or "").strip()
+    
+    if not title or not code:
+        return jsonify({"error": "Title and code are required"}), 400
+        
+    db=get_db()
+    cur=db.cursor()
+    try:
+        cur.execute("INSERT INTO function_templates (owner_id, title, description, code) VALUES (?,?,?,?)", (request.user["id"], title, desc, code))
+        db.commit()
+        return jsonify({"id": cur.lastrowid, "title": title, "description": desc, "code": code})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.put("/templates/<int:tpl_id>")
+@ui_auth_required
+def update_template(tpl_id):
+    data = request.get_json() or {}
+    title = (data.get("title") or "").strip()
+    desc = (data.get("description") or "").strip()
+    code = (data.get("code") or "").strip()
+    
+    if not title or not code:
+        return jsonify({"error": "Title and code are required"}), 400
+        
+    db=get_db()
+    cur=db.cursor()
+    cur.execute("SELECT owner_id FROM function_templates WHERE id=?", (tpl_id,))
+    row = cur.fetchone()
+    if not row: return jsonify({"error": "Not found"}), 404
+    
+    is_admin = request.user.get("role") == "admin"
+    if row["owner_id"] != request.user["id"] and not is_admin: 
+        return jsonify({"error": "Forbidden - You do not own this template"}), 403
+    
+    cur.execute("UPDATE function_templates SET title=?, description=?, code=? WHERE id=?", (title, desc, code, tpl_id))
+    db.commit()
+    return jsonify({"updated": True})
+
+@app.delete("/templates/<int:tpl_id>")
+@ui_auth_required
+def delete_template(tpl_id):
+    db=get_db()
+    cur=db.cursor()
+    cur.execute("SELECT owner_id FROM function_templates WHERE id=?", (tpl_id,))
+    row = cur.fetchone()
+    if not row: return jsonify({"error": "Not found"}), 404
+    
+    is_admin = request.user.get("role") == "admin"
+    if row["owner_id"] != request.user["id"] and not is_admin: 
+        return jsonify({"error": "Forbidden - You do not own this template"}), 403
+    
+    cur.execute("DELETE FROM function_templates WHERE id=?", (tpl_id,))
+    db.commit()
+    return jsonify({"deleted": True})
+
+@app.post("/templates/<int:tpl_id>:clone")
+@ui_auth_required
+def clone_template(tpl_id):
+    db=get_db()
+    cur=db.cursor()
+    cur.execute("SELECT owner_id, title, description, code FROM function_templates WHERE id=?", (tpl_id,))
+    row = cur.fetchone()
+    if not row: return jsonify({"error": "Not found"}), 404
+    if row["owner_id"] != request.user["id"]: return jsonify({"error": "Forbidden"}), 403
+    
+    new_title = f"Copy of {row['title']}"
+    cur.execute("INSERT INTO function_templates (owner_id, title, description, code) VALUES (?,?,?,?)", 
+                (request.user["id"], new_title, row["description"], row["code"]))
+    db.commit()
+    return jsonify({"id": cur.lastrowid, "title": new_title})
+
 # ==================== FUNCTION ROUTES ====================
 @app.post("/deploy_function")
 @ui_auth_required
 def deploy_function():
+    if request.user.get("role") == "viewer":
+        return jsonify({"error": "Viewers cannot create APIs"}), 403
+
     data = request.get_json() or {}
     code = data.get("code", "")
     desc = (data.get("desc") or "")[:255]
@@ -256,7 +580,10 @@ def update_function(fn_id):
     cur.execute("SELECT owner_id FROM api_container WHERE id=?", (fn_id,))
     row = cur.fetchone()
     if not row: return jsonify({"error":"Not found"}), 404
-    if row["owner_id"] != request.user["id"]: return jsonify({"error":"Forbidden"}), 403
+    
+    is_admin = request.user.get("role") == "admin"
+    if row["owner_id"] != request.user["id"] and not is_admin: 
+        return jsonify({"error":"Forbidden. Only the owner can modify this API."}), 403
     
     sets, vals = [], []
     if code:
@@ -281,6 +608,12 @@ def list_functions():
     scope = request.args.get("scope","mine")
     db=get_db()
     cur=db.cursor()
+    
+    # NEW LOGIC: Users can view functions where:
+    # 1. They are the owner
+    # 2. Or the function is assigned to a project they are a member of
+    # 3. Or it is public (if available view)
+    
     if scope == "available":
         cur.execute("""
             SELECT f.id, f.description, f.created_at, f.owner_id, u.email AS owner_email, p.name AS project_name
@@ -291,13 +624,15 @@ def list_functions():
             ORDER BY f.id DESC
         """, (request.user["id"],))
     else:
+        # Mine + Shared Projects
         cur.execute("""
-            SELECT f.id, f.description, f.created_at, f.visibility, f.owner_id, f.project_id, p.name AS project_name
+            SELECT DISTINCT f.id, f.description, f.created_at, f.visibility, f.owner_id, f.project_id, p.name AS project_name
             FROM api_container f
             LEFT JOIN projects p ON p.id=f.project_id
-            WHERE f.owner_id=?
+            LEFT JOIN project_members pm ON pm.project_id = f.project_id
+            WHERE f.owner_id=? OR pm.user_id=?
             ORDER BY f.id DESC
-        """, (request.user["id"],))
+        """, (request.user["id"], request.user["id"]))
     return jsonify([dict(r) for r in cur.fetchall()])
 
 @app.get("/functions/<int:fn_id>")
@@ -313,7 +648,16 @@ def get_function(fn_id):
     """, (fn_id,))
     row = cur.fetchone()
     if not row: return jsonify({"error":"Not found"}), 404
-    if row["visibility"] != "public" and row["owner_id"] != request.user["id"]:
+    
+    is_admin = request.user.get("role") == "admin"
+    
+    # Check if they are a project member
+    is_project_member = False
+    if row["project_id"]:
+        cur.execute("SELECT id FROM project_members WHERE project_id=? AND user_id=?", (row["project_id"], request.user["id"]))
+        is_project_member = cur.fetchone() is not None
+        
+    if row["visibility"] != "public" and row["owner_id"] != request.user["id"] and not is_admin and not is_project_member:
         return jsonify({"error":"Forbidden"}), 403
     return jsonify(dict(row))
 
@@ -325,7 +669,10 @@ def delete_function(fn_id):
     cur.execute("SELECT owner_id FROM api_container WHERE id=?", (fn_id,))
     row = cur.fetchone()
     if not row: return jsonify({"deleted": False, "error":"Not found"}), 404
-    if row["owner_id"] != request.user["id"]: return jsonify({"error":"Forbidden"}), 403
+    
+    is_admin = request.user.get("role") == "admin"
+    if row["owner_id"] != request.user["id"] and not is_admin: 
+        return jsonify({"error":"Forbidden. Only the owner can delete this API."}), 403
     cur.execute("DELETE FROM api_container WHERE id=?", (fn_id,))
     db.commit()
     return jsonify({"deleted": True})
@@ -346,12 +693,16 @@ def ofa():
     db=get_db()
     cur=db.cursor()
     try:
-        cur.execute("SELECT api_def FROM api_container WHERE id=?", (fn_id,))
+        cur.execute("SELECT api_def, owner_id, project_id FROM api_container WHERE id=?", (fn_id,))
         row = cur.fetchone()
         if not row:
             return jsonify({"error": "Function not found"}), 404
 
-        res = safe_exec_function(row["api_def"], args)
+        # Fetch environment variables for this function's owner and project
+        cur.execute("SELECT name, value FROM env_vars WHERE user_id=? AND (project_id IS NULL OR project_id=?)", (row["owner_id"], row["project_id"]))
+        env_vars = {r["name"]: r["value"] for r in cur.fetchall()}
+
+        res = safe_exec_function(row["api_def"], args, env=env_vars)
         if res.get("error"):
             error_msg = res["error"]
         else:
@@ -411,14 +762,17 @@ def drafts_test(draft_id):
     args = payload.get("args", {})
     db=get_db()
     cur=db.cursor()
-    cur.execute("SELECT owner_id, code FROM api_drafts WHERE id=?", (draft_id,))
+    cur.execute("SELECT owner_id, code, project_id FROM api_drafts WHERE id=?", (draft_id,))
     row = cur.fetchone()
     if not row: return jsonify({"error": "Draft not found"}), 404
     if row["owner_id"] != request.user["id"]: return jsonify({"error": "Forbidden"}), 403
 
     start = time.time()
     try:
-        result = safe_exec_function(row["code"], args)
+        cur.execute("SELECT name, value FROM env_vars WHERE user_id=? AND (project_id IS NULL OR project_id=?)", (row["owner_id"], row["project_id"]))
+        env_vars = {r["name"]: r["value"] for r in cur.fetchall()}
+
+        result = safe_exec_function(row["code"], args, env=env_vars)
         result["latency_ms"] = int((time.time() - start) * 1000)
         result["draft_id"] = draft_id
         return jsonify(result)
@@ -496,7 +850,7 @@ def stats():
             "functions": total_functions,
             "calls24h": calls24h,
             "successRate": round(success_rate, 2),
-            "topFunction": (by_fn[0]["label"] if by_fn else None)
+            "topFunction": (f"#{by_fn[0]['id']}" if by_fn else None)
         },
         "byFunction": by_fn,
         "outcomes": outcomes

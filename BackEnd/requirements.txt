@@ -1,0 +1,80 @@
+# ==========================================
+# Core Framework & Web Server
+# ==========================================
+Flask                        # Web Framework
+Werkzeug                     # WSGI Web Application Library
+gunicorn                     # Production WSGI server (Linux/macOS)
+waitress                     # Production WSGI server (Windows)
+Flask-Cors                   # CORS handling for Flask
+python-dotenv                # Environment variable management
+
+# ==========================================
+# Database & ORM
+# ==========================================
+PyMySQL                      # Pure Python MySQL Driver
+mysql-connector-python       # Official MySQL Driver
+psycopg2-binary              # PostgreSQL Driver
+SQLAlchemy                   # SQL Toolkit and Object-Relational Mapping
+Flask-SQLAlchemy             # Flask integration for SQLAlchemy
+alembic                      # Database migrations
+
+# ==========================================
+# Authentication & Security
+# ==========================================
+PyJWT                        # JSON Web Token implementation
+cryptography                 # Cryptographic recipes and primitives
+bcrypt                       # Password hashing
+passlib                      # Comprehensive password hashing framework
+Flask-HTTPAuth               # Basic and Digest HTTP authentication for Flask
+
+# ==========================================
+# Data Validation & Serialization
+# ==========================================
+pydantic                     # Data validation using Python type hints
+marshmallow                  # Object serialization and formatting
+
+# ==========================================
+# External API Clients & Networking
+# ==========================================
+requests                     # HTTP library for Python
+httpx                        # A next-generation HTTP client
+aiohttp                      # Asynchronous HTTP client/server
+urllib3                      # HTTP client with thread-safe connection pooling
+openai                       # OpenAI API client
+
+# ==========================================
+# Data Science & Processing
+# ==========================================
+pandas                       # Powerful data structures for data analysis
+numpy                        # The fundamental package for scientific computing
+python-dateutil              # Extensions to the standard Python datetime module
+pytz                         # World timezone definitions
+
+# ==========================================
+# Utilities & Parsers
+# ==========================================
+beautifulsoup4               # Screen-scraping library
+lxml                         # XML and HTML processing library
+chardet                      # Universal encoding detector
+pyyaml                       # YAML parser and emitter
+
+# ==========================================
+# Task Queues & Background Processing
+# ==========================================
+celery                       # Distributed task queue
+redis                        # Redis Python Client
+
+# ==========================================
+# Cloud & Logging (Optional)
+# ==========================================
+boto3                        # AWS SDK for Python
+sentry-sdk                   # Sentry error tracking
+
+# ==========================================
+# Testing, Linting & Formatting (Dev)
+# ==========================================
+pytest                       # Framework for writing small tests
+coverage                     # Code coverage measurement
+black                        # Uncompromising Python code formatter
+flake8                       # Tool for style guide enforcement
+mypy                         # Optional static typing

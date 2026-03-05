@@ -102,11 +102,11 @@ document.addEventListener('DOMContentLoaded', () => {
   bindClick('btnPromote', onPromoteDraft);
   bindClick('btnReset', () => location.reload());
 
-  bindClick('btnUpdateAgent', onUpdateAgent);
-  bindClick('btnTestAgent', onTestAgent);
+  bindClick('btnUpdateAPI', onUpdateAPI);
+  bindClick('btnTestAPI', onTestAPI);
   bindClick('btnUpdateAndTest', onUpdateAndTest);
-  bindClick('btnCancelEdit', resetToNewAgentMode);
-  bindClick('btnNewFunction', resetToNewAgentMode);
+  bindClick('btnCancelEdit', resetToNewAPIMode);
+  bindClick('btnNewFunction', resetToNewAPIMode);
 
   // Navigation handlers
   const navClickHandler = (e) => {
@@ -126,16 +126,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Auth Handlers
   bindClick('btnLogin', login);
-  bindClick('btnRegister', register);
+  bindClick('btnLogout', logout);
+
+  const createUserForm = document.getElementById('createUserForm');
+  if (createUserForm) {
+    createUserForm.addEventListener('submit', onAdminCreateUser);
+  }
   bindClick('btnLogout', logout);
 
   // Projects Handlers
   bindClick('btnCreateProject', createProject);
   bindClick('btnGenerateToken', generateToken);
 
+  // Env Vars
+  bindClick('btnCreateEnv', createEnvVar);
+  bindClick('btnReloadEnv', loadEnvVars);
+
   // Functions & Logs reloaders
   bindClick('btnReloadFunctions', () => loadFunctions('mine'));
   bindClick('btnReloadAvailable', () => loadFunctions('available'));
+
+  const functionProjectFilter = document.getElementById('functionProjectFilter');
+  if (functionProjectFilter) {
+    functionProjectFilter.addEventListener('change', () => {
+      const activeTab = document.querySelector('#fnTabs .nav-link.active');
+      const scope = activeTab && activeTab.id === 'tab-available' ? 'available' : 'mine';
+      loadFunctions(scope);
+    });
+  }
+
   bindClick('btnReloadLogs', loadLogs);
   bindClick('btnRefreshCharts', loadStats);
 
@@ -156,10 +175,27 @@ function setSection(targetId) {
   document.querySelectorAll(".nav-link").forEach(a => a.classList.remove("active"));
   document.querySelectorAll("[data-target='" + targetId + "']").forEach(a => a.classList.add("active"));
 
-  if (targetId === 'functionsSection') loadFunctions('mine');
+  if (targetId === 'functionsSection') {
+    loadDropdownProjects();
+    loadFunctions('mine');
+  }
   if (targetId === 'dashboardSection') loadStats();
   if (targetId === 'projectsSection') loadProjectsUI();
   if (targetId === 'logsSection') loadLogs();
+  if (targetId === 'envVarsSection') {
+    loadDropdownProjects();
+    loadEnvVars();
+  }
+  if (targetId === 'templatesSection') loadTemplates();
+  if (targetId === 'adminSection') {
+    if (!CURRENT_USER || CURRENT_USER.role !== 'admin') {
+      showToast('Admin', 'Unauthorized', 'danger');
+      setSection('builderSection');
+    } else {
+      loadAdminUsers();
+      loadAdminProjects();
+    }
+  }
 }
 
 // ===================== AUTH & LOGOUT =====================
@@ -174,15 +210,15 @@ function hideLoginOverlay() {
 }
 
 async function login() {
-  const email = document.getElementById('loginEmail').value.trim();
+  const username = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value.trim();
-  if (!email || !password) return showToast('Login', 'Please enter email and password.', 'warning');
+  if (!username || !password) return showToast('Login', 'Please enter username and password.', 'warning');
 
   try {
     const res = await fetch('/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ username, password })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid credentials');
@@ -198,28 +234,33 @@ async function login() {
   }
 }
 
-async function register() {
-  const name = document.getElementById('regName').value.trim();
-  const email = document.getElementById('regEmail').value.trim();
-  const password = document.getElementById('regPassword').value.trim();
-
-  if (!name || !email || !password) return showToast('Register', 'All fields are required.', 'warning');
+async function onAdminCreateUser(e) {
+  e.preventDefault();
+  const name = document.getElementById('createUserName').value.trim();
+  const email = document.getElementById('createUserEmail').value.trim();
+  const username = document.getElementById('createUserUsername').value.trim();
+  const password = document.getElementById('createUserPassword').value.trim();
+  const role = document.getElementById('createUserRole').value;
 
   try {
-    const res = await fetch('/auth/register', {
+    const res = await api('/admin/users', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password })
+      body: JSON.stringify({ name, email, username, password, role })
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-    showToast('Register', 'Account created! Logging you in...', 'success');
-    document.getElementById('loginEmail').value = email;
-    document.getElementById('loginPassword').value = password;
-    await login();
-  } catch (e) {
-    showToast('Register', e.message, 'danger');
+    if (res.error) throw new Error(res.error);
+
+    showToast('Admin', 'User created successfully.', 'success');
+    document.getElementById('createUserForm').reset();
+
+    // Hide modal
+    const modalEl = document.getElementById('createUserModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+
+    loadAdminUsers();
+  } catch (err) {
+    showToast('Admin', err.message, 'danger');
   }
 }
 
@@ -229,6 +270,7 @@ function logout() {
   localStorage.removeItem('ss_token');
   showToast('Logout', 'Signed out successfully.', 'info');
   showLoginOverlay();
+  location.reload();
 }
 
 async function fetchMe() {
@@ -244,6 +286,19 @@ async function fetchMe() {
 
 function onLoginSuccess() {
   document.getElementById('userLabel').textContent = CURRENT_USER.email;
+  // Apply RBAC UI hiding
+  if (CURRENT_USER.role === 'admin') {
+    document.getElementById('navAdmin').classList.remove('d-none');
+  } else {
+    document.getElementById('navAdmin').classList.add('d-none');
+  }
+
+  if (CURRENT_USER.role === 'viewer') {
+    document.querySelectorAll('.developer-only').forEach(el => el.classList.add('d-none'));
+  } else {
+    document.querySelectorAll('.developer-only').forEach(el => el.classList.remove('d-none'));
+  }
+
   loadDropdownProjects();
 }
 
@@ -251,15 +306,41 @@ function onLoginSuccess() {
 async function loadDropdownProjects() {
   try {
     const projects = await api('/projects');
+
     const sel = document.getElementById('functionProject');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">None (Personal Workspace)</option>';
-    projects.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name;
-      sel.appendChild(opt);
-    });
+    if (sel) {
+      sel.innerHTML = '<option value="">None (Personal Workspace)</option>';
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        sel.appendChild(opt);
+      });
+    }
+
+    const envSel = document.getElementById('envProject');
+    if (envSel) {
+      envSel.innerHTML = '<option value="">None (Personal Workspace)</option>';
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        envSel.appendChild(opt);
+      });
+    }
+
+    // Add to project filter
+    const filterSel = document.getElementById('functionProjectFilter');
+    if (filterSel) {
+      filterSel.innerHTML = '<option value="">All Projects</option>';
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        filterSel.appendChild(opt);
+      });
+    }
+
   } catch (e) {
     console.error("Failed to load projects", e);
   }
@@ -341,6 +422,258 @@ async function generateToken() {
     viewTokens(selectedProjectId, pName);
   } catch (e) {
     showToast('Tokens', e.message, 'danger');
+  }
+}
+
+// ===================== ENV VARS =====================
+async function loadEnvVars() {
+  try {
+    const envVars = await api('/env_vars');
+    const tbody = document.getElementById('envTableBody');
+    tbody.innerHTML = '';
+
+    if (envVars.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No variables found.</td></tr>';
+      return;
+    }
+
+    envVars.forEach(v => {
+      const tr = document.createElement('tr');
+      const projName = v.project_id ? '<span class="badge bg-secondary">Project #' + v.project_id + '</span>' : '<span class="text-muted small">Personal</span>';
+
+      tr.innerHTML = [
+        '<td class="fw-semibold">', v.name, '</td>',
+        '<td><code class="text-primary">', v.value, '</code></td>',
+        '<td>', projName, '</td>',
+        '<td class="text-end">',
+        `<button class="btn btn-sm btn-outline-primary me-1" onclick="showEditEnvVarModal(${v.id}, ${v.project_id || 'null'}, '${v.name.replace(/'/g, "\\'")}', '${v.value.replace(/'/g, "\\'")}')" title="Edit"><i class="bi bi-pencil"></i></button>`,
+        '<button class="btn btn-sm btn-outline-danger" onclick="deleteEnvVar(', v.id, ')" title="Delete"><i class="bi bi-trash"></i></button>',
+        '</td>'
+      ].join('');
+      tbody.appendChild(tr);
+    });
+  } catch (e) {
+    showToast('Env Vars', e.message, 'danger');
+  }
+}
+
+async function createEnvVar() {
+  const projInput = document.getElementById('envProject');
+  const nameInput = document.getElementById('newEnvName');
+  const valInput = document.getElementById('newEnvValue');
+
+  const project_id = projInput.value;
+  const name = nameInput.value.trim();
+  const value = valInput.value.trim();
+
+  if (!name || !value) return showToast('Env Vars', 'Name and Value are required.', 'warning');
+
+  try {
+    await api('/env_vars', {
+      method: 'POST',
+      body: JSON.stringify({ name, value, project_id })
+    });
+    showToast('Env Vars', 'Variable created!', 'success');
+    nameInput.value = '';
+    valInput.value = '';
+    loadEnvVars();
+  } catch (e) {
+    showToast('Env Vars', e.message, 'danger');
+  }
+}
+
+window.deleteEnvVar = async function deleteEnvVar(id) {
+  if (!confirm('Are you sure you want to delete this environment variable?')) return;
+  try {
+    const res = await api(`/env_vars/${id}`, { method: 'DELETE' }); // Changed callAPI to api
+    if (res.deleted || res.message) {
+      showToast('Env Vars', 'Variable deleted.', 'success');
+      loadEnvVars();
+    } else {
+      alert(res.error || 'Failed to delete variable');
+    }
+  } catch (e) {
+    alert('Error deleting environment variable');
+  }
+}
+
+window.showEditEnvVarModal = function showEditEnvVarModal(id, projectId, name, value) {
+  document.getElementById('editEnvVarId').value = id;
+  document.getElementById('editEnvName').value = name;
+  document.getElementById('editEnvValue').value = value;
+
+  // Clone project options from the newEnvProject select
+  const projectSelect = document.getElementById('editEnvProject');
+  const sourceSelect = document.getElementById('envProject');
+  projectSelect.innerHTML = sourceSelect.innerHTML;
+  projectSelect.value = projectId || '';
+
+  const modal = new bootstrap.Modal(document.getElementById('editEnvVarModal'));
+  modal.show();
+}
+
+document.getElementById('editEnvVarForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('editEnvVarId').value;
+  const payload = {
+    name: document.getElementById('editEnvName').value,
+    value: document.getElementById('editEnvValue').value,
+    project_id: document.getElementById('editEnvProject').value || null
+  };
+
+  try {
+    const res = await api(`/env_vars/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    if (res.error) {
+      alert(res.error);
+    } else {
+      showToast('Env Vars', 'Variable updated successfully.', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('editEnvVarModal')).hide();
+      loadEnvVars();
+    }
+  } catch (err) {
+    alert("Error updating environment variable");
+  }
+});
+
+// ===================== FUNCTION TEMPLATES =====================
+async function loadTemplates() {
+  try {
+    const data = await api('/templates'); // Changed callAPI to api
+    const container = document.getElementById('templatesContainer');
+    container.innerHTML = '';
+
+    if (!data || data.length === 0) {
+      container.innerHTML = '<div class="col-12"><div class="alert alert-secondary">No templates found. Click "New Template" to create one.</div></div>';
+      return;
+    }
+
+    data.forEach(tpl => {
+      const codeId = `tpl_code_${tpl.id}`;
+      // properly escape the code for rendering in HTML text areas
+      const codeEscaped = tpl.code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+      const isOwnerOrAdmin = CURRENT_USER && (tpl.owner_id === CURRENT_USER.id || CURRENT_USER.role === 'admin');
+      const actionDropdown = isOwnerOrAdmin ? `
+          <li><a class="dropdown-item" href="#" onclick="editTemplate(${tpl.id}, '${tpl.title.replace(/'/g, "\\'")}', '${(tpl.description || '').replace(/'/g, "\\'")}')"><i class="bi bi-pencil me-2 text-primary"></i>Edit</a></li>
+          <li><a class="dropdown-item" href="#" onclick="cloneTemplate(${tpl.id})"><i class="bi bi-copy me-2 text-success"></i>Clone</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-danger" href="#" onclick="deleteTemplate(${tpl.id})"><i class="bi bi-trash me-2"></i>Delete</a></li>
+      ` : `
+          <li><a class="dropdown-item" href="#" onclick="cloneTemplate(${tpl.id})"><i class="bi bi-copy me-2 text-success"></i>Clone</a></li>
+      `;
+
+      container.innerHTML += `
+        <div class="col-12">
+          <div class="card shadow-sm border-0 mb-3">
+            <div class="card-header bg-dark text-white d-flex flex-wrap justify-content-between align-items-center">
+              <div>
+                <i class="bi bi-file-earmark-code me-2"></i><strong>${tpl.title}</strong>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-light" onclick="copyToClipboard('${codeId}')"><i class="bi bi-clipboard me-1"></i>Copy Code</button>
+                <div class="dropdown">
+                  <button class="btn btn-sm btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-three-dots"></i>
+                  </button>
+                  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                    ${actionDropdown}
+                  </ul>
+                </div>
+              </div>
+            </div>
+            ${tpl.description ? `<div class="card-body bg-light border-bottom py-2 small text-muted">${tpl.description}</div>` : ''}
+            <div class="card-body bg-dark text-light p-0">
+              <textarea id="${codeId}" class="form-control bg-dark text-light border-0 font-monospace" style="resize: none;" rows="${Math.min(20, (tpl.code.match(/\n/g) || []).length + 2)}" readonly>${codeEscaped}</textarea>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+  } catch (e) {
+    console.error('Failed to load templates', e);
+  }
+}
+
+window.showCreateTemplateModal = function showCreateTemplateModal() {
+  document.getElementById('templateId').value = '';
+  document.getElementById('templateTitle').value = '';
+  document.getElementById('templateDesc').value = '';
+  document.getElementById('templateCode').value = '';
+  document.getElementById('templateModalTitle').innerText = 'Create Template';
+  const modal = new bootstrap.Modal(document.getElementById('templateModal'));
+  modal.show();
+}
+
+window.editTemplate = async function editTemplate(id, title, desc) {
+  try {
+    const data = await api('/templates'); // Changed callAPI to api
+    const tpl = data.find(t => t.id === id);
+    if (!tpl) return;
+
+    document.getElementById('templateId').value = id;
+    document.getElementById('templateTitle').value = title;
+    document.getElementById('templateDesc').value = desc;
+    document.getElementById('templateCode').value = tpl.code;
+    document.getElementById('templateModalTitle').innerText = 'Edit Template';
+    const modal = new bootstrap.Modal(document.getElementById('templateModal'));
+    modal.show();
+  } catch (e) {
+    alert("Error fetching template data");
+  }
+}
+
+document.getElementById('templateForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('templateId').value;
+  const payload = {
+    title: document.getElementById('templateTitle').value,
+    description: document.getElementById('templateDesc').value,
+    code: document.getElementById('templateCode').value
+  };
+
+  try {
+    let res;
+    if (id) {
+      res = await api(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(payload) }); // Changed callAPI to api
+    } else {
+      res = await api(`/templates`, { method: 'POST', body: JSON.stringify(payload) }); // Changed callAPI to api
+    }
+
+    if (res.error) {
+      alert(res.error);
+    } else {
+      bootstrap.Modal.getInstance(document.getElementById('templateModal')).hide();
+      loadTemplates();
+    }
+  } catch (err) {
+    alert("Error saving template");
+  }
+});
+
+window.cloneTemplate = async function cloneTemplate(id) {
+  try {
+    const res = await api(`/templates/${id}:clone`, { method: 'POST' }); // Changed callAPI to api
+    if (res.error) {
+      alert(res.error);
+    } else {
+      loadTemplates(); // refresh
+    }
+  } catch (e) {
+    alert('Failed to clone template');
+  }
+}
+
+window.deleteTemplate = async function deleteTemplate(id) {
+  if (!confirm('Are you sure you want to delete this template?')) return;
+  try {
+    const res = await api(`/templates/${id}`, { method: 'DELETE' }); // Changed callAPI to api
+    if (res.deleted) {
+      loadTemplates();
+    } else {
+      alert(res.error || 'Failed to delete template');
+    }
+  } catch (e) {
+    alert('Error deleting template');
   }
 }
 
@@ -434,10 +767,10 @@ async function onPromoteDraft() {
   }
 }
 
-// ===================== EDIT & TEST AGENT API =====================
+// ===================== EDIT & TEST API =====================
 let currentEditId = null;
 
-function resetToNewAgentMode() {
+function resetToNewAPIMode() {
   currentEditId = null;
   currentDraftId = null;
   document.getElementById('currentFunctionId').textContent = '(new)';
@@ -505,7 +838,7 @@ window.cloneFunction = async function (id) {
   }
 }
 
-async function onUpdateAgent() {
+async function onUpdateAPI() {
   if (!currentEditId) return false;
 
   const desc = document.getElementById('functionDesc').value.trim();
@@ -525,7 +858,7 @@ async function onUpdateAgent() {
   try {
     const body = { desc, code, visibility, project_id };
     await api('/functions/' + currentEditId, { method: 'PUT', body: JSON.stringify(body) });
-    showToast('Update', 'Agent updated successfully', 'success');
+    showToast('Update', 'API updated successfully', 'success');
     return true;
   } catch (e) {
     showToast('Update', e.message, 'danger');
@@ -533,8 +866,8 @@ async function onUpdateAgent() {
   }
 }
 
-async function onTestAgent() {
-  if (!currentEditId) return showToast("Test", "No agent ID found to test.", "warning");
+async function onTestAPI() {
+  if (!currentEditId) return showToast("Test", "No API ID found to test.", "warning");
 
   const args = safeJSONParse(document.getElementById("testParams").value, {});
   document.getElementById("outputBox").textContent = "⏳ Running test...";
@@ -550,7 +883,7 @@ async function onTestAgent() {
       document.getElementById("outputBox").textContent = JSON.stringify(res, null, 2);
     }
   } catch (e) {
-    showToast("Test", e.message || "Error testing agent", "danger");
+    showToast("Test", e.message || "Error testing API", "danger");
     document.getElementById("outputBox").textContent = e.message;
   }
 }
@@ -560,8 +893,8 @@ async function onUpdateAndTest() {
   const originalHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.innerHTML = '<span class="spinner-grow spinner-grow-sm me-2" role="status"></span>Running...'; btn.disabled = true; }
   try {
-    const saved = await onUpdateAgent();
-    if (saved) await onTestAgent();
+    const saved = await onUpdateAPI();
+    if (saved) await onTestAPI();
   } catch (e) { console.error(e); }
   finally { if (btn) { btn.innerHTML = originalHtml; btn.disabled = false; } }
 }
@@ -589,11 +922,19 @@ window.viewFunction = async function (id) {
 
 async function loadFunctions(scope = 'mine') {
   try {
-    const fns = await api("/functions?scope=" + scope);
+    let url = "/functions?scope=" + scope;
+
+    // Check if project filter is applied
+    const filterEl = document.getElementById('functionProjectFilter');
+    if (filterEl && filterEl.value) {
+      url += "&project_id=" + encodeURIComponent(filterEl.value);
+    }
+
+    const fns = await api(url);
     const tb = document.getElementById(scope === 'mine' ? 'functionsTableBody' : 'availableTableBody');
     tb.innerHTML = '';
     if (!fns || fns.length === 0) {
-      tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No functions found.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No APIs found.</td></tr>';
       return;
     }
     fns.forEach(f => {
@@ -690,7 +1031,7 @@ function renderCharts(byFn, outcomes) {
     callsChart = new Chart(ctxCalls, {
       type: 'bar',
       data: {
-        labels: byFn.map(x => (x.label || 'Fn ' + x.id).substring(0, 15)),
+        labels: byFn.map(x => '#' + x.id),
         datasets: [{
           label: 'Total Calls',
           data: byFn.map(x => x.calls),
@@ -704,20 +1045,145 @@ function renderCharts(byFn, outcomes) {
 
   const ctxSuc = document.getElementById('chartSuccess');
   if (ctxSuc && (outcomes.success > 0 || outcomes.error > 0)) {
-    successChart = new Chart(ctxSuc, {
-      type: 'doughnut',
-      data: {
-        labels: ['Success', 'Error'],
-        datasets: [{
-          data: [outcomes.success, outcomes.error],
-          backgroundColor: ['#198754', '#dc3545']
-        }]
-      },
-      options: { responsive: true, maintainAspectRatio: false }
-    });
+    try {
+      const sCtx = document.getElementById('chartSuccess');
+      const sLabels = ['Success', 'Error'];
+      const sData = [outcomes.success, outcomes.error];
+      successChart = updateChart(successChart, sCtx, 'doughnut', sLabels, sData, [
+        'rgba(40, 167, 69, 0.6)', 'rgba(220, 53, 69, 0.6)'
+      ], 'Outcomes');
+    } catch (e) {
+      console.warn("Chart error", e);
+    }
   }
 }
 
+function updateChart(chartRef, ctx, type, labels, data, colors, label) {
+  if (chartRef) chartRef.destroy();
+  return new Chart(ctx, {
+    type,
+    data: {
+      labels,
+      datasets: [{ label, data, backgroundColor: colors, borderWidth: 1 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+}
+
+// ===================== ADMIN PANEL =====================
+async function loadAdminUsers() {
+  try {
+    const users = await api("/admin/users");
+    const tbody = document.getElementById('adminUsersTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    users.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+                <td>${u.id}</td>
+                <td class="fw-bold">${u.username}</td>
+                <td class="fw-semibold">${u.name}</td>
+                <td>${u.email}</td>
+                <td>
+                <td>
+                    <select class="form-select form-select-sm" onchange="updateUserRole(${u.id}, this.value)">
+                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+                        <option value="developer" ${u.role === 'developer' ? 'selected' : ''}>Developer</option>
+                        <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Viewer</option>
+                    </select>
+                </td>
+                <td class="small text-muted">${new Date(u.created_at).toLocaleString()}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.id})"><i class="bi bi-trash"></i></button>
+                </td>
+            `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {
+    showToast('Admin', e.message, 'danger');
+  }
+}
+
+window.updateUserRole = async function (userId, newRole) {
+  if (!confirm(`Change user #${userId} to ${newRole}?`)) return loadAdminUsers();
+
+  try {
+    await api(`/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify({ role: newRole }) });
+    showToast('Admin', 'User role updated', 'success');
+  } catch (e) {
+    showToast('Admin', e.message, 'danger');
+    loadAdminUsers(); // revert UI on failure
+  }
+}
+
+window.deleteUser = async function (userId) {
+  if (!confirm(`Are you sure you want to completely delete User #${userId}? This cannot be undone.`)) return;
+  try {
+    await api(`/admin/users/${userId}`, { method: 'DELETE' });
+    showToast('Admin', 'User deleted successfully', 'success');
+    loadAdminUsers(); // refresh the table
+  } catch (e) {
+    showToast('Admin', e.message, 'danger');
+  }
+}
+
+async function loadAdminProjects() {
+  try {
+    const projects = await api("/admin/projects");
+    const tbody = document.getElementById('adminProjectsTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    projects.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+                <td>#${p.id}</td>
+                <td class="fw-semibold">${p.name}</td>
+                <td><span class="badge bg-secondary">${p.owner}</span></td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" onclick="showAssignModal(${p.id}, '${p.name.replace(/'/g, "\\'")}')">Assign Users</button>
+                </td>
+            `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {
+    showToast('Admin', e.message, 'danger');
+  }
+}
+
+window.showAssignModal = function (projectId, projectName) {
+  document.getElementById('assignModalProjectName').innerText = `Assign Users to: ${projectName}`;
+  document.getElementById('assignModalProjectId').value = projectId;
+
+  // clear input
+  document.getElementById('assignUserEmailId').value = '';
+
+  const modal = new bootstrap.Modal(document.getElementById('assignUserModal'));
+  modal.show();
+}
+
+window.assignUserToProject = async function () {
+  const projectId = document.getElementById('assignModalProjectId').value;
+  const userId = document.getElementById('assignUserEmailId').value.trim(); // Expecting ID for simplicity right now
+
+  if (!userId) return alert('Enter a User ID');
+
+  try {
+    const res = await api('/admin/project_assign', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: parseInt(userId), project_id: parseInt(projectId), action: 'assign' })
+    });
+
+    if (res.error) alert(res.error);
+    else showToast('Admin', 'User assigned!', 'success');
+
+    bootstrap.Modal.getInstance(document.getElementById('assignUserModal')).hide();
+
+  } catch (e) {
+    alert(e.message);
+  }
+}
 // ===================== AI GENERATION =====================
 async function onGenerateAI() {
   const prompt = document.getElementById('aiPrompt').value.trim();

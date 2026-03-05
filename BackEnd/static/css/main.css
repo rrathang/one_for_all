@@ -410,6 +410,11 @@ pre {
   z-index: 2000;
 }
 
+.auth-overlay.d-none {
+  pointer-events: none;
+  display: none !important;
+}
+
 .auth-card {
   width: 100%;
   max-width: 400px;
